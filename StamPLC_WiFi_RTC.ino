@@ -7,6 +7,7 @@
  * - PLC input/output monitoring
  * - Environmental sensor monitoring (LM75B, INA226)
  * - Status display and LED indication
+ * - IP Address and MAC Address display
  * 
  * Hardware: M5StamPLC with Stamp-S3A control module
  * Required Library: M5StamPLC (install via Arduino IDE Library Manager)
@@ -37,6 +38,9 @@ const unsigned long DISPLAY_UPDATE_INTERVAL = 1000;   // Update display every 1 
 const unsigned long SENSOR_READ_INTERVAL = 5000;      // Read sensors every 5 seconds
 const unsigned long RTC_SYNC_INTERVAL = 3600000;      // Sync RTC every 1 hour
 
+// Display mode (rotate between screens)
+const unsigned long SCREEN_ROTATION_INTERVAL = 5000;  // Switch screen every 5 seconds
+
 // ============================================================================
 // GLOBAL VARIABLES
 // ============================================================================
@@ -44,9 +48,13 @@ const unsigned long RTC_SYNC_INTERVAL = 3600000;      // Sync RTC every 1 hour
 unsigned long lastDisplayUpdate = 0;
 unsigned long lastSensorRead = 0;
 unsigned long lastRtcSync = 0;
+unsigned long lastScreenRotation = 0;
 
 bool wifiConnected = false;
 bool rtcSynced = false;
+
+// Display screen index (0 = main, 1 = network, 2 = sensors)
+uint8_t displayScreenIndex = 0;
 
 // ============================================================================
 // FUNCTION DECLARATIONS
@@ -63,9 +71,11 @@ void controlOutputs();
 void handleButtonInput();
 void displayStartupScreen();
 void displayMainScreen();
-void displayWiFiStatus();
-void displaySensorData();
+void displayNetworkInfoScreen();
+void displaySensorDataScreen();
+void displayIOStatusScreen();
 void setStatusLED(uint8_t r, uint8_t g, uint8_t b);
+String getMacAddress();
 
 // ============================================================================
 // SETUP
@@ -184,6 +194,7 @@ void connectWiFi() {
     wifiConnected = true;
     Serial.println("Wi-Fi connected!");
     Serial.printf("IP Address: %s\n", WiFi.localIP().toString().c_str());
+    Serial.printf("MAC Address: %s\n", getMacAddress().c_str());
     Serial.printf("Signal Strength: %d dBm\n", WiFi.RSSI());
     
     M5StamPLC.Lcd().clear();
@@ -193,6 +204,7 @@ void connectWiFi() {
     M5StamPLC.Lcd().setTextSize(1);
     M5StamPLC.Lcd().setTextColor(TFT_WHITE);
     M5StamPLC.Lcd().println(WiFi.localIP().toString().c_str());
+    M5StamPLC.Lcd().println(getMacAddress().c_str());
     
     setStatusLED(0, 255, 0);  // Green LED
   } else {
@@ -322,13 +334,32 @@ void displayStartupScreen() {
   
   M5StamPLC.Lcd().setTextSize(1);
   M5StamPLC.Lcd().println("Wi-Fi & RTC Firmware");
-  M5StamPLC.Lcd().println("Version 1.0");
+  M5StamPLC.Lcd().println("Version 1.1");
   M5StamPLC.Lcd().println("");
   M5StamPLC.Lcd().println("Initializing...");
 }
 
 void updateDisplay() {
-  displayMainScreen();
+  unsigned long currentTime = millis();
+  
+  // Rotate between different display screens
+  if (currentTime - lastScreenRotation >= SCREEN_ROTATION_INTERVAL) {
+    lastScreenRotation = currentTime;
+    displayScreenIndex = (displayScreenIndex + 1) % 3;
+  }
+  
+  // Display the appropriate screen
+  switch (displayScreenIndex) {
+    case 0:
+      displayMainScreen();
+      break;
+    case 1:
+      displayNetworkInfoScreen();
+      break;
+    case 2:
+      displaySensorDataScreen();
+      break;
+  }
 }
 
 void displayMainScreen() {
@@ -379,20 +410,118 @@ void displayMainScreen() {
   // Display current
   float current = M5StamPLC.getIoSocketOutputCurrent();
   M5StamPLC.Lcd().printf("Current: %.3fA\n", current);
+}
+
+void displayNetworkInfoScreen() {
+  M5StamPLC.Lcd().clear();
+  M5StamPLC.Lcd().setCursor(0, 0);
+  M5StamPLC.Lcd().setTextSize(1);
+  M5StamPLC.Lcd().setTextColor(TFT_YELLOW);
+  
+  M5StamPLC.Lcd().println("=== NETWORK INFO ===");
+  
+  M5StamPLC.Lcd().setTextColor(TFT_WHITE);
+  M5StamPLC.Lcd().println("");
+  
+  // Display network status
+  M5StamPLC.Lcd().print("Status: ");
+  if (wifiConnected) {
+    M5StamPLC.Lcd().setTextColor(TFT_GREEN);
+    M5StamPLC.Lcd().println("CONNECTED");
+  } else {
+    M5StamPLC.Lcd().setTextColor(TFT_RED);
+    M5StamPLC.Lcd().println("DISCONNECTED");
+  }
+  
+  M5StamPLC.Lcd().setTextColor(TFT_WHITE);
+  
+  // Display SSID
+  M5StamPLC.Lcd().print("SSID: ");
+  M5StamPLC.Lcd().println(WIFI_SSID);
+  
+  // Display IP Address
+  M5StamPLC.Lcd().print("IP: ");
+  if (wifiConnected) {
+    M5StamPLC.Lcd().setTextColor(TFT_CYAN);
+    M5StamPLC.Lcd().println(WiFi.localIP().toString().c_str());
+  } else {
+    M5StamPLC.Lcd().setTextColor(TFT_GRAY);
+    M5StamPLC.Lcd().println("0.0.0.0");
+  }
+  
+  // Display MAC Address
+  M5StamPLC.Lcd().setTextColor(TFT_WHITE);
+  M5StamPLC.Lcd().print("MAC: ");
+  M5StamPLC.Lcd().setTextColor(TFT_CYAN);
+  M5StamPLC.Lcd().println(getMacAddress().c_str());
+  
+  // Display signal strength
+  M5StamPLC.Lcd().setTextColor(TFT_WHITE);
+  M5StamPLC.Lcd().print("Signal: ");
+  if (wifiConnected) {
+    M5StamPLC.Lcd().setTextColor(TFT_ORANGE);
+    M5StamPLC.Lcd().printf("%d dBm\n", WiFi.RSSI());
+  } else {
+    M5StamPLC.Lcd().setTextColor(TFT_GRAY);
+    M5StamPLC.Lcd().println("N/A");
+  }
+  
+  M5StamPLC.Lcd().setTextColor(TFT_WHITE);
+  M5StamPLC.Lcd().println("");
+  M5StamPLC.Lcd().setTextSize(2);
+  M5StamPLC.Lcd().setTextColor(TFT_LIGHTGREY);
+  M5StamPLC.Lcd().println("(Page 1 of 3)");
+}
+
+void displaySensorDataScreen() {
+  M5StamPLC.Lcd().clear();
+  M5StamPLC.Lcd().setCursor(0, 0);
+  M5StamPLC.Lcd().setTextSize(1);
+  M5StamPLC.Lcd().setTextColor(TFT_YELLOW);
+  
+  M5StamPLC.Lcd().println("=== SENSOR DATA ===");
+  
+  M5StamPLC.Lcd().setTextColor(TFT_WHITE);
+  M5StamPLC.Lcd().println("");
+  
+  // Read and display sensor values
+  float temp = M5StamPLC.getTemp();
+  float voltage = M5StamPLC.getPowerVoltage();
+  float current = M5StamPLC.getIoSocketOutputCurrent();
+  
+  M5StamPLC.Lcd().print("Temperature: ");
+  M5StamPLC.Lcd().setTextColor(TFT_CYAN);
+  M5StamPLC.Lcd().printf("%.2f°C\n", temp);
+  
+  M5StamPLC.Lcd().setTextColor(TFT_WHITE);
+  M5StamPLC.Lcd().print("Voltage: ");
+  M5StamPLC.Lcd().setTextColor(TFT_CYAN);
+  M5StamPLC.Lcd().printf("%.2fV\n", voltage);
+  
+  M5StamPLC.Lcd().setTextColor(TFT_WHITE);
+  M5StamPLC.Lcd().print("Current: ");
+  M5StamPLC.Lcd().setTextColor(TFT_CYAN);
+  M5StamPLC.Lcd().printf("%.3fA\n", current);
+  
+  M5StamPLC.Lcd().setTextColor(TFT_WHITE);
+  M5StamPLC.Lcd().println("");
   
   // Display input/output status
-  M5StamPLC.Lcd().println("");
-  M5StamPLC.Lcd().print("Inputs: ");
+  M5StamPLC.Lcd().print("Inputs:  ");
   for (int i = 0; i < 8; i++) {
     M5StamPLC.Lcd().print(M5StamPLC.readPlcInput(i) ? "1" : "0");
   }
-  
   M5StamPLC.Lcd().println("");
-  M5StamPLC.Lcd().print("Relays: ");
+  
+  M5StamPLC.Lcd().print("Relays:  ");
   for (int i = 0; i < 4; i++) {
     M5StamPLC.Lcd().print(M5StamPLC.readPlcRelay(i) ? "1" : "0");
   }
+  
   M5StamPLC.Lcd().println("");
+  M5StamPLC.Lcd().setTextSize(2);
+  M5StamPLC.Lcd().setTextColor(TFT_LIGHTGREY);
+  M5StamPLC.Lcd().println("(Page 2 of 3)");
 }
 
 void readSensors() {
@@ -452,15 +581,29 @@ void handleButtonInput() {
     Serial.println("Button C pressed");
     M5StamPLC.tone(1000, 100);  // Beep
     
-    // Disconnect Wi-Fi
-    if (wifiConnected) {
-      disconnectWiFi();
-    }
+    // Manually rotate to next screen
+    displayScreenIndex = (displayScreenIndex + 1) % 3;
+    lastScreenRotation = millis();
   }
 }
 
 void setStatusLED(uint8_t r, uint8_t g, uint8_t b) {
   M5StamPLC.setStatusLight(r, g, b);
+}
+
+// ============================================================================
+// UTILITY FUNCTIONS
+// ============================================================================
+
+String getMacAddress() {
+  uint8_t mac[6];
+  WiFi.macAddress(mac);
+  
+  char macStr[18];
+  sprintf(macStr, "%02X:%02X:%02X:%02X:%02X:%02X", 
+    mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+  
+  return String(macStr);
 }
 
 // ============================================================================
@@ -483,6 +626,7 @@ void handleSerialCommands() {
       Serial.printf("Wi-Fi Status: %s\n", wifiConnected ? "Connected" : "Disconnected");
       if (wifiConnected) {
         Serial.printf("IP: %s\n", WiFi.localIP().toString().c_str());
+        Serial.printf("MAC: %s\n", getMacAddress().c_str());
         Serial.printf("Signal: %d dBm\n", WiFi.RSSI());
       }
     } 
